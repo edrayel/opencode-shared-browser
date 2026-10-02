@@ -1,3 +1,7 @@
+// Copyright 2026 Edward Rajah
+// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0. See ./LICENSE at the repo root.
 import type { Plugin } from "@opencode-ai/plugin"
 import { appendFileSync, mkdirSync } from "fs"
 

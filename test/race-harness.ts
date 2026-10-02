@@ -1,3 +1,6 @@
+// Copyright 2026 Edward Rajah
+// SPDX-License-Identifier: Apache-2.0
+//
 // Concurrency test for plugins/browser-guard.ts.
 //
 // Loads the REAL plugin with bun and drives its tool.execute.before hook,

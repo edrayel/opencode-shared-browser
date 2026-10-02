@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Edward Rajah
+# SPDX-License-Identifier: Apache-2.0
+#
 # Launcher for @playwright/mcp used by opencode's global config.
 #
 # Why this exists: the MCP's bundled playwright-core pins one Chromium revision

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Edward Rajah
+# SPDX-License-Identifier: Apache-2.0
+#
 # Runs the browser-guard test suite against a live Chrome on the CDP port.
 #
 # Requires: bun, and Chrome already running via bin/chrome-cdp-profile.

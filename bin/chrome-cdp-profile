@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Edward Rajah
+# SPDX-License-Identifier: Apache-2.0
+#
 # Launcher for the shared, persistent Chrome that the Playwright MCP attaches to
 # via CDP. Run this BEFORE starting opencode (or whenever the browser is down).
 #

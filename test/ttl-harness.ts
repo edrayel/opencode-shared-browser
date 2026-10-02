@@ -1,3 +1,6 @@
+// Copyright 2026 Edward Rajah
+// SPDX-License-Identifier: Apache-2.0
+//
 // TTL expiry test for plugins/browser-guard.ts.
 //
 // A tab claim must stop counting as "ours" once it ages past

@@ -107,6 +107,15 @@ after the window closes.
 - **`--no-sandbox` is required** on Ubuntu 23.10+ where AppArmor disables
   unprivileged user namespaces. Drop it if your system allows sandboxes.
 
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+The code is deliberately permissive so it can sit in other people's opencode
+config without a legal review slowing them down. If you need something the
+plugin actually protects you from — the paid tiers are maintenance and support,
+not the license — get in touch.
+
 ## Layout
 
 ```
