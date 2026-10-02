@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Launcher for @playwright/mcp used by opencode's global config.
+#
+# Why this exists: the MCP's bundled playwright-core pins one Chromium revision
+# (1237 at the time of writing). The shared cache at ~/.cache/ms-playwright is
+# populated by whichever project installed Playwright, so the revisions drift.
+# Hardcoding a revision in opencode.jsonc silently breaks on the next upgrade.
+#
+# This resolves the newest full Chromium in the shared cache at launch time and
+# passes it as --executable-path. If nothing is found, it installs via the
+# project-local Playwright if one is available, then re-resolves. If it still
+# cannot find a browser, it exits with a clear message rather than letting the
+# MCP fail opaquely.
+set -euo pipefail
+
+MCP_BIN="${PLAYWRIGHT_MCP_BIN:-$HOME/.local/share/pnpm/playwright-mcp}"
+CACHE="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+LOG_DIR="$HOME/.local/share/opencode/mcp-logs"
+LOG="$LOG_DIR/playwright.log"
+
+mkdir -p "$LOG_DIR"
+
+log() { printf '%s playwright-mcp: %s\n' "$(date -Is)" "$*" >>"$LOG"; }
+
+# Newest chromium-<rev>/chrome-linux*/chrome — the "full" build, not the
+# headless shell, so page screenshots and PDF output keep working.
+resolve_chromium() {
+  find "$CACHE" -maxdepth 3 -type f -path '*/chrome-linux*/chrome' -perm -u+x \
+    2>/dev/null | sort -V | tail -n 1
+}
+
+CHROME="$(resolve_chromium || true)"
+
+if [ -z "$CHROME" ]; then
+  log "no Chromium found under $CACHE — attempting install"
+  for proj in "$HOME"/dev/*/; do
+    if [ -x "$proj/node_modules/.bin/playwright" ]; then
+      log "installing via $proj"
+      (cd "$proj" && ./node_modules/.bin/playwright install chromium) >>"$LOG" 2>&1 || true
+      break
+    fi
+  done
+  CHROME="$(resolve_chromium || true)"
+fi
+
+if [ -z "$CHROME" ]; then
+  log "FATAL: no Chromium in $CACHE and no project-local Playwright to install from"
+  echo "playwright-mcp: no Chromium available; run 'npx playwright install chromium'" >&2
+  exit 1
+fi
+
+log "resolved $CHROME"
+
+# Two modes:
+#
+#   CDP (default) — attach to an already-running Chrome on $CDP_PORT. Multiple
+#     opencode instances can share one browser, and the persistent profile is
+#     opened exactly once by the launcher (see ~/bin/chrome-cdp-profile).
+#     The MCP never launches the browser, so --executable-path/--isolated/
+#     --user-data-dir/--no-sandbox do not apply in this mode.
+#
+#   LOCAL (PLAYWRIGHT_MCP_MODE=local) — launch a browser ourselves against the
+#     persistent profile so it inherits the signed-in Google account. Only one
+#     process can hold the profile: a second launch aborts on SingletonLock.
+#
+CDP_PORT="${PLAYWRIGHT_MCP_CDP_PORT:-9222}"
+PROFILE="${PLAYWRIGHT_MCP_PROFILE:-$HOME/.config/google-chrome-for-testing}"
+MODE="${PLAYWRIGHT_MCP_MODE:-cdp}"
+
+if [ "$MODE" = "local" ]; then
+  log "mode=local profile=$PROFILE"
+  exec "$MCP_BIN" \
+    --headless \
+    --browser chromium \
+    --executable-path "$CHROME" \
+    --no-sandbox \
+    --user-data-dir "$PROFILE" \
+    "$@" 2>>"$LOG"
+fi
+
+CDP="http://127.0.0.1:$CDP_PORT"
+if ! curl -sf -m 3 "$CDP/json/version" >/dev/null 2>&1; then
+  log "FATAL: no Chrome on CDP port $CDP_PORT — start ~/bin/chrome-cdp-profile first"
+  echo "playwright-mcp: no browser on $CDP" >&2
+  echo "playwright-mcp: start it with ~/bin/chrome-cdp-profile" >&2
+  exit 1
+fi
+
+log "mode=cdp endpoint=$CDP"
+exec "$MCP_BIN" \
+  --cdp-endpoint "$CDP" \
+  "$@" 2>>"$LOG"

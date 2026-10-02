@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Launcher for the shared, persistent Chrome that the Playwright MCP attaches to
+# via CDP. Run this BEFORE starting opencode (or whenever the browser is down).
+#
+# Why a separate script: the Chrome for Testing profile at
+# ~/.config/google-chrome-for-testing holds live Google sign-ins, so it must be
+# opened by exactly one process. The MCP attaches over CDP instead of launching
+# a browser, which lets several opencode instances share it without fighting
+# over the Chromium SingletonLock.
+#
+# This browser must always start with exactly one blank tab.
+#
+# Two independent mechanisms were resurrecting old tabs and turning them into
+# unowned "foreign" tabs that block every browser_tabs close (see
+# browser-guard.ts). Both are disabled here:
+#
+#   1. Crash restore. A SIGTERM kill (pkill) leaves exit_type unset in the
+#      profile, which Chrome reads as "previous run crashed" and restores the
+#      session. --disable-features=InfiniteSessionRestore alone is not enough,
+#      so we also clear the saved session files, which is what actually drives
+#      the restore list.
+#   2. Explicit restore. --restore-last-session is never passed.
+#
+# Note: `pkill -f "remote-debugging-port=9222"` matches its own invoking shell
+# and kills it. Use `pkill -f '[r]emote-debugging-port=9222'`, or better, stop
+# the browser gracefully (Browser.close over CDP) so the profile stays clean.
+#
+# Start:   ~/bin/chrome-cdp-profile
+# Stop:    ~/bin/chrome-cdp-profile --stop
+# Verify:  curl -s http://127.0.0.1:9222/json/version | head -2
+set -euo pipefail
+
+CACHE="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+PROFILE="${PLAYWRIGHT_MCP_PROFILE:-$HOME/.config/google-chrome-for-testing}"
+PORT="${PLAYWRIGHT_MCP_CDP_PORT:-9222}"
+
+# ── Graceful stop ──────────────────────────────────────────────────────────────
+# Browser.close over CDP lets Chrome record a clean exit, so the next start does
+# not trigger crash restore. Falls back to SIGTERM only if CDP is unreachable.
+stop_browser() {
+  local version
+  if version="$(curl -sf -m 3 "http://127.0.0.1:$PORT/json/version" 2>/dev/null)"; then
+    local ws
+    ws="$(printf '%s' "$version" | sed -n 's/.*"webSocketDebuggerUrl":"\([^"]*\)".*/\1/p')"
+    if [ -n "$ws" ]; then
+      node -e '
+        const ws = process.argv[1];
+        const s = new WebSocket(ws);
+        s.addEventListener("open", () => s.send(JSON.stringify({id:1,method:"Browser.close"})));
+        s.addEventListener("error", () => process.exit(0));
+        setTimeout(() => process.exit(0), 1500);
+      ' "$ws" 2>/dev/null || true
+    fi
+  fi
+  for _ in $(seq 1 10); do
+    curl -sf -m 1 "http://127.0.0.1:$PORT/json/version" >/dev/null 2>&1 || return 0
+    sleep 0.5
+  done
+  pkill -f '[r]emote-debugging-port='"$PORT" 2>/dev/null || true
+  return 0
+}
+
+if [ "${1:-}" = "--stop" ]; then
+  stop_browser
+  echo "chrome-cdp-profile: stopped"
+  exit 0
+fi
+
+CHROME="$(find "$CACHE" -maxdepth 3 -type f -path '*/chrome-linux*/chrome' -perm -u+x \
+  2>/dev/null | sort -V | tail -n 1)"
+
+if [ -z "$CHROME" ]; then
+  echo "chrome-cdp-profile: no Chromium under $CACHE; run 'npx playwright install chromium'" >&2
+  exit 1
+fi
+
+if curl -sf -m 3 "http://127.0.0.1:$PORT/json/version" >/dev/null 2>&1; then
+  echo "chrome-cdp-profile: already listening on $PORT"
+  exit 0
+fi
+
+# A SingletonLock left behind by a crash is stale; Chromium refuses to start
+# while it exists even when nothing holds the profile.
+if [ -e "$PROFILE/SingletonLock" ] && ! fuser -s "$PROFILE/SingletonLock" 2>/dev/null; then
+  rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
+fi
+
+# Drop saved session/tab snapshots so a previous crash cannot be replayed into
+# tabs on this start. Chrome is not running here (checked above), so this is safe.
+rm -f "$PROFILE"/Default/Sessions/Session_* "$PROFILE"/Default/Sessions/Tabs_* 2>/dev/null || true
+
+setsid nohup "$CHROME" \
+  --no-sandbox \
+  --user-data-dir="$PROFILE" \
+  --profile-directory=Default \
+  --remote-debugging-port="$PORT" \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-features=InfiniteSessionRestore \
+  --new-window \
+  about:blank \
+  >"$HOME/tmp/chrome-cdp.log" 2>&1 </dev/null &
+
+disown
+for _ in $(seq 1 20); do
+  if curl -sf -m 2 "http://127.0.0.1:$PORT/json/version" >/dev/null 2>&1; then
+    echo "chrome-cdp-profile: up on $PORT (profile $PROFILE)"
+    exit 0
+  fi
+  sleep 0.5
+done
+
+echo "chrome-cdp-profile: failed to come up; see $HOME/tmp/chrome-cdp.log" >&2
+exit 1

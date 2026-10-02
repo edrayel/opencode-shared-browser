@@ -1,0 +1,20 @@
+# Nothing here is secret, but a browser profile is not for version control.
+# This guards against a profile being copied in, or logs/sync output committed.
+google-chrome-for-testing/
+chrome-for-testing/
+.playwright-mcp/
+*.log
+Cookies
+Cookies-journal
+Sessions/
+Local State
+
+# Screenshots
+*.png
+*.jpg
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
