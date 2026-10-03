@@ -45,14 +45,31 @@ as "here is the legitimate workaround" instead of an unexplained failure.
 | `PLAYWRIGHT_MCP_CDP_PORT` | `9222` | all three |
 | `PLAYWRIGHT_MCP_PROFILE` | `~/.config/google-chrome-for-testing` | launcher, wrapper |
 | `PLAYWRIGHT_MCP_MODE` | `cdp` | wrapper (`cdp` or `local`) |
+| `PLAYWRIGHT_MCP_LAUNCHER` | `~/bin/chrome-cdp-profile` | wrapper, when Chrome is down |
 | `BROWSER_GUARD_TTL_MS` | `900000` (15 min) | guard |
 | `PLAYWRIGHT_BROWSERS_PATH` | `~/.cache/ms-playwright` | launcher |
 
+Tests use their own browser so they never disturb a running session:
+
+| Variable | Default | Used by |
+|---|---|---|
+| `GUARD_TEST_PORT` | `9333` | `test/run.sh` and harnesses |
+| `GUARD_TEST_PROFILE` | `~/tmp/guard-test-profile` | `test/run.sh` |
+| `GUARD_TEST_TARGET` | `http://127.0.0.1:8000` | URLs the test tabs load |
+| `GUARD_TEST_SYNC` | `~/tmp/race` | barrier directory between harnesses |
+
 ## Troubleshooting
 
-**MCP exits with "no browser on http://127.0.0.1:9222"**
-The wrapper fails loudly rather than silently launching an isolated browser.
-Run `~/bin/chrome-cdp-profile`.
+**MCP exits with "no browser on http://127.0.0.1:9222, and … could not start one"**
+The wrapper tried to start Chrome itself and failed. Usually a stale profile lock
+or a missing Chromium build. Run `~/bin/chrome-cdp-profile` by hand to see the
+real error, or set `PLAYWRIGHT_MCP_LAUNCHER` if it lives somewhere other than
+`~/bin`.
+
+**No browser tools in the session at all**
+opencode drops an MCP that failed during startup, so the tools stay missing until
+opencode restarts. The error is in
+`~/.local/share/opencode/mcp-logs/playwright.log` — search for `FATAL`.
 
 **Guard denies every close**
 Expected while another instance is active — check `browser_tabs list`. See

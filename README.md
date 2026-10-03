@@ -43,12 +43,19 @@ Then wire it up in `~/.config/opencode/opencode.jsonc` — see
 section of [docs/AGENTS.fragment.md](docs/AGENTS.fragment.md) into your global
 `AGENTS.md` so the model knows *why* a call was denied.
 
-Finally, start the browser **before** opencode:
+Finally, start the browser. opencode starts it for you if it is not already up,
+so this is optional — do it anyway so the first tool call is not waiting on a
+Chrome launch:
 
 ```bash
 ~/bin/chrome-cdp-profile        # start  (idempotent)
 ~/bin/chrome-cdp-profile --stop # graceful stop
 ```
+
+The MCP server is spawned once when opencode starts. The wrapper therefore
+starts the browser itself when the port is dead, rather than exiting — a browser
+started *after* opencode would otherwise leave the MCP missing for the rest of
+the session.
 
 ## Why CDP rather than a shared `--user-data-dir`
 
@@ -81,7 +88,6 @@ tab that closes is ours by definition.
 ## Tests
 
 ```bash
-~/bin/chrome-cdp-profile        # tests need a live browser
 ./test/run.sh
 ```
 
@@ -90,6 +96,12 @@ spawning LLM agents — the guard's behaviour is a pure function of
 `(tool, args, sessionID, live tabs)`, so the hook can be invoked directly. It
 asserts both the decision *and* the resulting browser state, so a run only passes
 if no tab was destroyed.
+
+It also uses **its own browser**: a throwaway profile on port 9333, started and
+stopped as the rounds require. That is deliberate — restarting the shared browser
+severs the CDP connection of every attached opencode instance, which surfaces
+elsewhere as a connection-closed error, and the shared profile may hold live
+credentials these tests have no business touching.
 
 Last run: 8 passed, 0 failed — single-instance close allowed, 3-way race denied
 in every instance across repeated rounds with zero tab loss, TTL expiry denying
