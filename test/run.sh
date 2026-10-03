@@ -19,7 +19,17 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 LAUNCHER="$ROOT/bin/chrome-cdp-profile"
 SYNC="${GUARD_TEST_SYNC:-$HOME/tmp/race}"
-PORT="${PLAYWRIGHT_MCP_CDP_PORT:-9222}"
+
+# Tests run against a DEDICATED profile and port, never the shared one.
+#
+# This suite restarts the browser repeatedly. Pointed at the shared profile that
+# would sever the CDP connection of every attached opencode instance, which
+# shows up as "MCP error -32000: Connection closed" in unrelated sessions. A
+# throwaway profile also means these tests never touch your signed-in accounts.
+TEST_PROFILE="${GUARD_TEST_PROFILE:-$HOME/tmp/guard-test-profile}"
+PORT="${GUARD_TEST_PORT:-9333}"
+mkdir -p "$TEST_PROFILE"
+
 TARGET="${GUARD_TEST_TARGET:-http://127.0.0.1:8000}"
 
 pass=0
@@ -37,9 +47,11 @@ check() { # check <description> <0|1>
 }
 
 reset_browser() {
-  "$LAUNCHER" --stop >/dev/null 2>&1
+  PLAYWRIGHT_MCP_CDP_PORT="$PORT" PLAYWRIGHT_MCP_PROFILE="$TEST_PROFILE" \
+    "$LAUNCHER" --stop >/dev/null 2>&1
   sleep 1
-  "$LAUNCHER" >/dev/null 2>&1
+  PLAYWRIGHT_MCP_CDP_PORT="$PORT" PLAYWRIGHT_MCP_PROFILE="$TEST_PROFILE" \
+    "$LAUNCHER" >/dev/null 2>&1
 }
 
 tab_count() {
@@ -51,7 +63,7 @@ tab_count() {
 run_harness() { # run_harness <logname> <sessionID> <url>
   local log="$LOGDIR/$1.log" sid="$2" url="$3"
   rm -rf "$SYNC"; mkdir -p "$SYNC"
-  bun "$HERE/race-harness.ts" "$sid" "$url" >"$log" 2>&1 &
+  PLAYWRIGHT_MCP_CDP_PORT="$PORT" bun "$HERE/race-harness.ts" "$sid" "$url" >"$log" 2>&1 &
   local pid=$!
   for _ in $(seq 1 60); do
     [ -f "$SYNC/$sid.opened" ] && break
@@ -62,9 +74,15 @@ run_harness() { # run_harness <logname> <sessionID> <url>
   cat "$log"
 }
 
+# The test browser is disposable: start it if absent. Never touches $SHARED_PORT.
 if ! curl -sf -m 3 "http://127.0.0.1:$PORT/json/version" >/dev/null 2>&1; then
-  echo "no Chrome on $PORT — start it with $LAUNCHER" >&2
-  exit 1
+  echo "starting test browser on $PORT (profile $TEST_PROFILE)"
+  PLAYWRIGHT_MCP_CDP_PORT="$PORT" PLAYWRIGHT_MCP_PROFILE="$TEST_PROFILE" \
+    "$LAUNCHER" >/dev/null 2>&1
+  if ! curl -sf -m 3 "http://127.0.0.1:$PORT/json/version" >/dev/null 2>&1; then
+    echo "could not start a test browser on $PORT" >&2
+    exit 1
+  fi
 fi
 if ! curl -sf -m 3 -o /dev/null "$TARGET" 2>/dev/null; then
   echo "note: $TARGET is not serving; tabs will fall back to about:blank (inert)" >&2
@@ -88,9 +106,9 @@ for round in 1 2; do
   rm -rf "$SYNC"; mkdir -p "$SYNC"
   baseline=$(tab_count)
 
-  bun "$HERE/race-harness.ts" ses_A "$TARGET/pricing.html" >"$LOGDIR/A.log" 2>&1 &
-  bun "$HERE/race-harness.ts" ses_B "$TARGET/contact.html" >"$LOGDIR/B.log" 2>&1 &
-  bun "$HERE/race-harness.ts" ses_C "$TARGET/about.html"   >"$LOGDIR/C.log" 2>&1 &
+  PLAYWRIGHT_MCP_CDP_PORT="$PORT" bun "$HERE/race-harness.ts" ses_A "$TARGET/pricing.html" >"$LOGDIR/A.log" 2>&1 &
+  PLAYWRIGHT_MCP_CDP_PORT="$PORT" bun "$HERE/race-harness.ts" ses_B "$TARGET/contact.html" >"$LOGDIR/B.log" 2>&1 &
+  PLAYWRIGHT_MCP_CDP_PORT="$PORT" bun "$HERE/race-harness.ts" ses_C "$TARGET/about.html"   >"$LOGDIR/C.log" 2>&1 &
   wait
 
   for _ in $(seq 1 60); do
@@ -112,7 +130,8 @@ done
 echo
 echo "== TTL expiry =="
 reset_browser
-ttl_out=$(BROWSER_GUARD_TTL_MS=2000 bun "$HERE/ttl-harness.ts" ses_TTL "$TARGET/pricing.html" 2>/dev/null)
+ttl_out=$(PLAYWRIGHT_MCP_CDP_PORT="$PORT" BROWSER_GUARD_TTL_MS=2000 \
+  bun "$HERE/ttl-harness.ts" ses_TTL "$TARGET/pricing.html" 2>/dev/null)
 echo "$ttl_out" | sed 's/^/  /'
 check "fresh claim allowed"  "$(echo "$ttl_out" | grep -q 'ALLOWED' && echo 1 || echo 0)"
 check "expired claim denied" "$([ "$(echo "$ttl_out" | grep -c 'DENIED')" = "1" ] && echo 1 || echo 0)"

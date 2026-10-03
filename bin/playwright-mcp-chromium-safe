@@ -82,10 +82,32 @@ if [ "$MODE" = "local" ]; then
 fi
 
 CDP="http://127.0.0.1:$CDP_PORT"
+
+# Start the shared browser if it is not already up.
+#
+# The MCP server is spawned once at opencode startup, so requiring an
+# already-running browser made a reboot silently fatal: opencode launched
+# before Chrome was ready, this script exited, and the MCP never came back for
+# the whole session ("MCP error -32000: Connection closed"). Starting it here
+# removes the ordering requirement entirely.
+LAUNCHER="${PLAYWRIGHT_MCP_LAUNCHER:-$HOME/bin/chrome-cdp-profile}"
+
 if ! curl -sf -m 3 "$CDP/json/version" >/dev/null 2>&1; then
-  log "FATAL: no Chrome on CDP port $CDP_PORT — start ~/bin/chrome-cdp-profile first"
-  echo "playwright-mcp: no browser on $CDP" >&2
-  echo "playwright-mcp: start it with ~/bin/chrome-cdp-profile" >&2
+  if [ -x "$LAUNCHER" ]; then
+    log "no Chrome on $CDP_PORT — starting it via $LAUNCHER"
+    if "$LAUNCHER" >>"$LOG" 2>&1; then
+      log "started Chrome on $CDP_PORT"
+    else
+      log "WARN: $LAUNCHER failed; see $LOG"
+    fi
+  else
+    log "WARN: no launcher at $LAUNCHER (set PLAYWRIGHT_MCP_LAUNCHER)"
+  fi
+fi
+
+if ! curl -sf -m 3 "$CDP/json/version" >/dev/null 2>&1; then
+  log "FATAL: no Chrome on CDP port $CDP_PORT and could not start one"
+  echo "playwright-mcp: no browser on $CDP, and $LAUNCHER could not start one" >&2
   exit 1
 fi
 
